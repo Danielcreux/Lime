@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Isometric Grid with Smooth NPCs</title>
+  <style>
+    /* Basic reset */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #333;
+    }
+
+    header {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    header h1 {
+      font-size: 2em;
+      color: #32CD32; /* Lime green */
+    }
+
+    #controls {
+      display: flex;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    #controls input[type="color"] {
+      margin-right: 20px;
+      padding: 5px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    /* The parent container for isometric transform */
+    .grid-container {
+      position: relative;
+      transform: rotateX(60deg) rotateZ(45deg);
+      transform-origin: center center;
+      transform-style: preserve-3d;
+    }
+
+    #contenedor {
+      position: relative;
+      background-color: #ccc;
+    }
+
+    /* Each cell: float-based, standard 2D. */
+    .celda {
+      width: 10px;
+      height: 10px;
+      background-color: #fff;
+      border-left: 1px solid #ddd;
+      border-bottom: 1px solid #ddd;
+      transition: background 0.3s;
+      cursor: pointer;
+      float: left;
+    }
+    .celda:hover {
+      background: rgba(255, 0, 0, 0.1);
+    }
+
+    /*
+      NPCs are absolutely positioned within #contenedor (NOT inside .celda),
+      so we can do smooth transitions on left/top, and invert rotation so they face the camera.
+    */
+    .npc {
+      width: 60px;
+      height: 60px;
+      background: url(npc.png);
+      background-size: cover;
+      border-radius: 5%;
+      position: absolute;
+      /* Smooth transitions for movement */
+      transition: left 1s linear, top 1s linear;
+      z-index: 999;
+
+      /* Invert rotation so it appears "facing" camera, adjust as needed */
+      transform: translateX(-20px) translateY(-20px) rotateZ(139deg) rotateX(199deg);
+    }
+
+    /* Navigation Buttons (also rotated with the parent) */
+    .nav-button {
+      position: absolute;
+      background-color: #32CD32; /* Lime green */
+      border: none;
+      color: white;
+      padding: 10px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1.2em;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      transition: background 0.3s, transform 0.2s;
+      z-index: 1000;
+    }
+    .nav-button:hover {
+      background-color: #28a428;
+      transform: scale(1.1);
+    }
+    #arriba {
+      top: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    #abajo {
+      bottom: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    #izquierda {
+      left: -50px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    #derecha {
+      right: -50px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    /* Responsive (optional) */
+    @media (max-width: 600px) {
+      .nav-button {
+        padding: 8px;
+        font-size: 1em;
+      }
+      header h1 {
+        font-size: 1.5em;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Isometric Grid with Smooth NPCs</h1>
+    <div id="controls">
+      <input type="color" id="color" value="#ff0000" title="Choose Cell Color">
+    </div>
+  </header>
+
+  <!-- .grid-container is the isometrically rotated parent -->
+  <div class="grid-container">
+    <button id="arriba" class="nav-button" title="Move Up">⬆️</button>
+    <button id="abajo" class="nav-button" title="Move Down">⬇️</button>
+    <button id="izquierda" class="nav-button" title="Move Left">⬅️</button>
+    <button id="derecha" class="nav-button" title="Move Right">➡️</button>
+
+    <div id="contenedor"></div>
+  </div>
+
+  <script>
+    const anchura = 20;   // number of cells horizontally (visible)
+    const altura = 20;    // number of cells vertically (visible)
+    const tamanio = 40;   // pixel size per cell
+
+    let desfasex = 0;
+    let desfasey = 0;
+    let color = "#ff0000"; // default color
+
+    // Store NPC elements in a dictionary by ID so we can update positions smoothly
+    const npcElements = {}; // { [npc.id]: HTMLDivElement }
+
+    // Reference to the grid container
+    const contenedor = document.querySelector("#contenedor");
+
+    // Color picker
+    document.querySelector("#color").onchange = function(){
+      color = this.value;
+    };
+
+    // Draw the (visible) grid based on desfasex/desfasey
+    function dibuja() {
+      contenedor.innerHTML = "";
+      contenedor.style.width = (anchura * tamanio) + "px";
+      contenedor.style.height = (altura * tamanio) + "px";
+
+      for(let x = desfasex; x < desfasex + anchura; x++){
+        for(let y = desfasey; y < desfasey + altura; y++){
+          const celda = document.createElement("div");
+          celda.classList.add("celda");
+          celda.style.width = tamanio + "px";
+          celda.style.height = tamanio + "px";
+          celda.setAttribute("data-x", x);
+          celda.setAttribute("data-y", y);
+
+          // When clicked, paint cell & send to server
+          celda.onclick = function(){
+            const payload = { x, y, color };
+            // Immediately color it locally
+            celda.style.background = color;
+
+            // Save on server
+            fetch("http://localhost:3000/save-cell", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(() => {
+              // success or handle error
+            })
+            .catch(err => console.error(err));
+          };
+          contenedor.appendChild(celda);
+        }
+      }
+    }
+
+    dibuja();
+
+    // Periodically update from server
+    let timer = setTimeout(loop, 1000);
+
+    function loop() {
+      // 1) Fetch painted cells
+      fetch("http://localhost:3000/celdas")
+        .then(r => r.json())
+        .then(data => {
+          // Update cell backgrounds
+          data.forEach(dato => {
+            const { x, y, color } = dato;
+            // Only color if within our current view
+            if (
+              x >= desfasex && x < desfasex + anchura &&
+              y >= desfasey && y < desfasey + altura
+            ) {
+              const selector = `.celda[data-x='${x}'][data-y='${y}']`;
+              const cellDiv = document.querySelector(selector);
+              if (cellDiv) {
+                cellDiv.style.background = color;
+              }
+            }
+          });
+        })
+        .catch(err => console.error("Cell fetch error:", err));
+
+      // 2) Fetch NPCs
+      fetch("http://localhost:3000/npcs")
+        .then(r => r.json())
+        .then(npcs => {
+          // Mark which NPC IDs are still present
+          const currentIDs = new Set(npcs.map(n => n.id));
+
+          // Remove any NPC elements that no longer exist on server
+          Object.keys(npcElements).forEach(id => {
+            if (!currentIDs.has(id)) {
+              npcElements[id].remove();
+              delete npcElements[id];
+            }
+          });
+
+          // Update or create each NPC element
+          npcs.forEach(npc => {
+            const { id, x, y } = npc;
+
+            // If not in dictionary, create the element
+            if (!npcElements[id]) {
+              const npcDiv = document.createElement("div");
+              npcDiv.classList.add("npc");
+              npcDiv.setAttribute("data-id", id);
+              contenedor.appendChild(npcDiv);
+              npcElements[id] = npcDiv;
+            }
+
+            // Store x,y on the element for repositioning
+            npcElements[id].setAttribute("data-x", x);
+            npcElements[id].setAttribute("data-y", y);
+
+            // Convert grid coords to container coords
+            const screenX = (x - desfasex) * tamanio;
+            const screenY = (y - desfasey) * tamanio;
+
+            // Hide or show NPC
+            if (
+              screenX < 0 || screenX >= (anchura * tamanio) ||
+              screenY < 0 || screenY >= (altura * tamanio)
+            ) {
+              npcElements[id].style.display = "none";
+            } else {
+              npcElements[id].style.display = "block";
+              npcElements[id].style.left = screenY + "px";
+              npcElements[id].style.top = screenX + "px";
+            }
+          });
+        })
+        .catch(err => console.error("NPC fetch error:", err));
+
+      clearTimeout(timer);
+      timer = setTimeout(loop, 1000);
+    }
+
+    /* Navigation: shift the board window, then redraw & reposition NPCs */
+    document.querySelector("#arriba").onclick = function(){
+      desfasex--;
+      dibuja();
+      repositionNPCs();
+    };
+    document.querySelector("#abajo").onclick = function(){
+      desfasex++;
+      dibuja();
+      repositionNPCs();
+    };
+    document.querySelector("#izquierda").onclick = function(){
+      desfasey--;
+      dibuja();
+      repositionNPCs();
+    };
+    document.querySelector("#derecha").onclick = function(){
+      desfasey++;
+      dibuja();
+      repositionNPCs();
+    };
+
+    function repositionNPCs() {
+      // Re-apply new top/left for each NPC based on new offset
+      Object.keys(npcElements).forEach(id => {
+        const npcDiv = npcElements[id];
+        // Read last known coords from data attributes
+        const x = parseInt(npcDiv.getAttribute("data-x"), 10);
+        const y = parseInt(npcDiv.getAttribute("data-y"), 10);
+
+        const screenX = (x - desfasex) * tamanio;
+        const screenY = (y - desfasey) * tamanio;
+
+        if (
+          screenX < 0 || screenX >= anchura * tamanio ||
+          screenY < 0 || screenY >= altura * tamanio
+        ) {
+          npcDiv.style.display = "none";
+        } else {
+          npcDiv.style.display = "block";
+          npcDiv.style.left = screenY + "px";
+          npcDiv.style.top = screenX + "px";
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+
